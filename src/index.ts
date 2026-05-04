@@ -46,24 +46,6 @@ app.use(
 );
 
 
-// =========================================================================
-// 🚨 TEMPORARY HACKATHON PROXY: REDIRECTS TO LOGISTIQ FRONTEND
-// =========================================================================
-app.use((req, res, next) => {
-    // We ignore the root health check so Render still knows the app is alive
-    if (req.originalUrl === "/") {
-        // Optional: You can also change the root message down in the Health Check section
-        // to tell the judges where to go if they hit the root URL directly!
-        return next();
-    }
-    
-    // Redirect all traffic straight to your Firebase website
-    const targetUrl = `https://logistiq-ai-b7d52.web.app${req.originalUrl}`;
-    res.redirect(307, targetUrl);
-});
-// =========================================================================
-
-
 // ─── Public Routes ────────────────────────────────────────
 
 // Auth
