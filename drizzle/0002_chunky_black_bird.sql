@@ -1,0 +1,2 @@
+ALTER TABLE "property_listings" DROP CONSTRAINT "bhk_type_valid";--> statement-breakpoint
+ALTER TABLE "property_listings" ADD CONSTRAINT "bhk_type_valid" CHECK ("property_listings"."bhk_type" IS NULL OR "property_listings"."bhk_type" BETWEEN 1 AND 10);

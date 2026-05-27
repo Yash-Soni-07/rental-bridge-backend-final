@@ -26,6 +26,20 @@ export const propertyTypeEnum = pgEnum("property_type", [
     "studio",
     "townhouse",
     "villa",
+    "flat",
+    "plot",
+]);
+
+export const listingPurposeEnum = pgEnum("listing_purpose", [
+    "rent",
+    "sale",
+    "both",
+]);
+
+export const areaTypeEnum = pgEnum("area_type", [
+    "carpet",
+    "built_up",
+    "super",
 ]);
 
 export const propertyStatusEnum = pgEnum("property_status", [
@@ -269,7 +283,7 @@ export const maintenanceRequests = pgTable("maintenance_requests", {
     check("actual_cost_positive", sql`${table.actual_cost} >= 0`)
 ]);
 
-// ─── 10. Reviews ─────────────────────────────────
+// ─── 10. Reviews ─────────────────────────────────────────────────────────────
 
 export const reviews = pgTable(
     "reviews",
@@ -295,7 +309,98 @@ export const reviews = pgTable(
     ]
 );
 
-// ─── Relations (UNCHANGED — already correct) ─────
+// ─── 11. Property Listings (Public Map Catalogue) ────────────────────────────
+//
+// This is the PUBLIC, read-only catalogue that powers the map pins.
+// It is intentionally separate from `properties` (the landlord rental mgmt table).
+//
+// Source: geocoded 99acres CSV + future scraped/manually-added listings.
+// All rows default to listing_purpose = 'both' so they always appear on the map
+// regardless of which display checkbox the user has toggled (rent / sale).
+// Frontend handles display-level formatting (e.g. ₹1.2 Cr, ₹18k/mo).
+// DB stores raw accurate numeric values for correct filtering & range queries.
+//
+// When a landlord claims a listing, a proper `properties` row is created and
+// linked back via `linked_property_id`.
+
+export const propertyListings = pgTable("property_listings", {
+    id: serial("id").primaryKey(),
+
+    // ── Source tracking (idempotent imports) ──────────────────────────────────
+    source_id: varchar("source_id", { length: 100 }).unique(),   // e.g. '99acres_42'
+    source:    varchar("source", { length: 50 }).notNull(),       // e.g. '99acres_2023_24'
+
+    // ── Identity ──────────────────────────────────────────────────────────────
+    name:           varchar("name", { length: 255 }).notNull(),
+    property_title: varchar("property_title", { length: 255 }),
+    description:    text("description"),
+
+    // ── Location ──────────────────────────────────────────────────────────────
+    location_raw: text("location_raw"),              // preserved raw CSV string
+    locality:     varchar("locality", { length: 150 }), // parsed neighbourhood
+    ward:         varchar("ward", { length: 100 }),     // AMC ward (backfilled via point-in-polygon)
+    city:         varchar("city", { length: 100 }).notNull().default("Ahmedabad"),
+    state:        varchar("state", { length: 100 }).notNull().default("Gujarat"),
+    country:      varchar("country", { length: 100 }).notNull().default("India"),
+
+    // ── Classification ────────────────────────────────────────────────────────
+    property_type:   propertyTypeEnum("property_type").notNull(),
+    // All listings default to 'both' — shown regardless of user's rent/sale toggle.
+    // Change to 'rent' or 'sale' only when certain that one purpose is unavailable.
+    listing_purpose: listingPurposeEnum("listing_purpose").notNull().default("both"),
+    bhk_type:        integer("bhk_type"),            // 1–6; null for plots
+
+    // ── Area ──────────────────────────────────────────────────────────────────
+    area_sqft_raw:   real("area_sqft_raw"),           // original value from source
+    area_type:       areaTypeEnum("area_type"),        // carpet | built_up | super
+    // Normalized to Super Built-Up on import using industry multipliers:
+    //   carpet   × 1.325   (midpoint of 1.30–1.35)
+    //   built_up × 1.175   (midpoint of 1.15–1.20)
+    //   super    × 1.0     (no change)
+    area_sqft_super: real("area_sqft_super"),          // used for all rent/price math
+
+    // ── Sale Price ────────────────────────────────────────────────────────────
+    // Stored as exact INR for correct DB range queries.
+    // Frontend formats for display: 12000000 → ₹1.2 Cr  |  450000 → ₹4.5 L
+    price_in_cr:        numeric("price_in_cr", { precision: 10, scale: 4 }),  // from source
+    price_in_inr:       numeric("price_in_inr", { precision: 16, scale: 2 }), // computed
+    rate_per_sqft:      numeric("rate_per_sqft", { precision: 10, scale: 2 }), // raw from source
+    rate_per_sqft_super: numeric("rate_per_sqft_super", { precision: 10, scale: 2 }), // normalized
+
+    // ── Estimated Rent (Yield-Based) ──────────────────────────────────────────
+    // Formula: Monthly Rent = (price_in_inr × yield) / 12
+    // Stored as exact INR. Frontend formats: 18320 → ₹18,320/mo  |  8000 → ₹8k/mo
+    est_monthly_rent:     numeric("est_monthly_rent", { precision: 12, scale: 2 }),     // 3.0% yield (primary display)
+    est_monthly_rent_min: numeric("est_monthly_rent_min", { precision: 12, scale: 2 }), // 2.5% yield
+    est_monthly_rent_max: numeric("est_monthly_rent_max", { precision: 12, scale: 2 }), // 4.0% yield
+    rent_per_sqft:        numeric("rent_per_sqft", { precision: 10, scale: 2 }),         // est_monthly_rent / area_sqft_super
+
+    // ── Coordinates ───────────────────────────────────────────────────────────
+    // No city-specific bbox constraint — platform will support multiple cities.
+    latitude:    real("latitude"),
+    longitude:   real("longitude"),
+    is_geocoded: boolean("is_geocoded").notNull().default(false),
+
+    // ── Status & Ownership ────────────────────────────────────────────────────
+    is_verified: boolean("is_verified").notNull().default(false),
+
+    // Admin user who added/imported this listing. Restrict delete to protect catalogue.
+    added_by: integer("added_by")
+        .references(() => users.id, { onDelete: "restrict" }),
+
+    // Set when a landlord claims this listing → links to the rental management system.
+    linked_property_id: integer("linked_property_id")
+        .references(() => properties.id, { onDelete: "set null" }),
+
+    created_at: timestamp("created_at").defaultNow().notNull(),
+    updated_at: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+    check("bhk_type_valid",       sql`${table.bhk_type} IS NULL OR ${table.bhk_type} BETWEEN 1 AND 10`),
+    check("area_raw_positive",    sql`${table.area_sqft_raw} > 0`),
+    check("area_super_positive",  sql`${table.area_sqft_super} > 0`),
+    check("price_inr_positive",   sql`${table.price_in_inr} >= 0`),
+    check("rent_positive",        sql`${table.est_monthly_rent} >= 0`),
+]);
 
 // ─── Relations ────────────────────────────────────────────────────────────────
 
@@ -391,5 +496,16 @@ export const reviewsRelations = relations(reviews, ({ one }) => ({
     reviewer: one(users, {
         fields: [reviews.reviewer_id],
         references: [users.id],
+    }),
+}));
+
+export const propertyListingsRelations = relations(propertyListings, ({ one }) => ({
+    addedBy: one(users, {
+        fields: [propertyListings.added_by],
+        references: [users.id],
+    }),
+    linkedProperty: one(properties, {
+        fields: [propertyListings.linked_property_id],
+        references: [properties.id],
     }),
 }));

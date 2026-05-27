@@ -8,6 +8,20 @@
       "when": 1776193260792,
       "tag": "0000_cynical_triathlon",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779531073540,
+      "tag": "0001_living_scarlet_spider",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779531384973,
+      "tag": "0002_chunky_black_bird",
+      "breakpoints": true
     }
   ]
 }
