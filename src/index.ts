@@ -13,6 +13,7 @@ import maintenanceRouter from "./routes/maintenance_routes.js";
 import reviewsRouter from "./routes/reviews_routes.js";
 import authRouter from "./routes/auth_routes.js";
 import mapRouter from "./routes/map_routes.js";
+import inquiryRouter from "./routes/inquiry_routes.js";
 
 // ─── Auth Middlewares ─────────────────────────────────────
 import { authenticate } from "./middlewares/authenticate.js";
@@ -54,6 +55,9 @@ app.use("/api/auth", authRouter);
 
 // Map — public, no auth required (browsing listings does not need login)
 app.use("/api/map", mapRouter);
+
+// Inquiries - public form
+app.use("/api/inquiries", inquiryRouter);
 
 // ─── Protected Routes ─────────────────────────────────────
 
