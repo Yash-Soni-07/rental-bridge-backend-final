@@ -97,6 +97,10 @@ JWT_SECRET="your-256-bit-secret-here"
 
 # Server port (optional, defaults to 3000)
 PORT=3000
+
+# Nodemailer SMTP settings for transactional emails (e.g., Gmail)
+SMTP_USER="your-email@gmail.com"
+SMTP_PASS="your-app-password"
 ```
 
 > ⚠️ **Security Note:** Rotate your `JWT_SECRET` and `DATABASE_URL` credentials regularly. If these values are ever exposed, rotate them immediately.
@@ -121,7 +125,16 @@ Copy the example above into a `.env` file and fill in your values.
 npm run db:push
 ```
 
-### 4. Start the development server
+### 4. Seed the database
+
+Populate the database with properties and demo data (bookings, payments, applications, etc.):
+
+```bash
+node scripts/seed_featured.mjs
+node scripts/seed_demo_flow.mjs
+```
+
+### 5. Start the development server
 
 ```bash
 npm run dev
@@ -129,7 +142,7 @@ npm run dev
 
 The server will start on `http://localhost:3000` with hot reload via `tsx watch`.
 
-### 5. Verify it's running
+### 6. Verify it's running
 
 ```bash
 curl http://localhost:3000/
@@ -201,6 +214,7 @@ All endpoints are prefixed with `/api`.
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
 | `GET` | `/properties` | Public | List all properties |
+| `GET` | `/properties/featured` | Public | List paginated featured properties with advanced filters (rent, bhk, etc.) |
 | `GET` | `/properties/:id` | Public | Get property details |
 | `GET` | `/properties/owner/:ownerId` | Owner / Admin | Get properties by owner |
 | `POST` | `/properties` | Authenticated | Create a property |
@@ -355,3 +369,5 @@ All errors follow a consistent JSON format:
 | `npm run db:migrate` | Apply migrations to the database |
 | `npm run db:push` | Push schema directly (dev only) |
 | `npm run db:studio` | Open Drizzle Studio in the browser |
+| `node scripts/seed_featured.mjs` | Seed 500 diverse featured properties into the database |
+| `node scripts/seed_demo_flow.mjs` | Seed realistic demo flow data (applications, bookings, payments, maintenance) |
