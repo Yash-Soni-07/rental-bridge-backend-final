@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { db } from "../db/index.js";
-import { properties } from "../db/schema/app.js";
-import { eq } from "drizzle-orm";
+import { properties, propertyListings } from "../db/schema/app.js";
+import { eq, sql } from "drizzle-orm";
 import { authenticate } from "../middlewares/authenticate.js";
 import { verifyOwnership } from "../middlewares/verifyOwnership.js";
 import google from "googlethis";
@@ -50,6 +50,40 @@ router.get("/owner/:ownerId", authenticate, verifyOwnership("ownerId"), async (r
     } catch (error) {
         console.error(`GET /properties/owner/${ownerId} error:`, error);
         return res.status(500).json({ error: "Failed to fetch owner properties" });
+    }
+});
+
+// ─────────────────────────────────────────────
+// GET /api/properties/featured
+// Public. Returns all featured properties joined with their
+// linked property_listings id so the frontend can open ListingDetailView.
+// Supports pagination (page, limit)
+// ─────────────────────────────────────────────
+router.get("/featured", async (req: Request, res: Response) => {
+    try {
+        const page = parseInt(req.query.page as string) || 1;
+        const limit = parseInt(req.query.limit as string) || 20;
+        const offset = (page - 1) * limit;
+
+        const [rows, totalRes] = await Promise.all([
+            db.execute(sql`
+                SELECT
+                    p.*,
+                    pl.id AS listing_id
+                FROM properties p
+                LEFT JOIN property_listings pl ON pl.linked_property_id = p.id
+                ORDER BY p.id ASC
+                LIMIT ${limit} OFFSET ${offset}
+            `),
+            db.execute(sql`SELECT COUNT(*) FROM properties`)
+        ]);
+
+        const total = parseInt(totalRes.rows[0].count as string);
+
+        return res.status(200).json({ data: rows.rows, total });
+    } catch (error) {
+        console.error("GET /properties/featured error:", error);
+        return res.status(500).json({ error: "Failed to fetch featured properties" });
     }
 });
 
