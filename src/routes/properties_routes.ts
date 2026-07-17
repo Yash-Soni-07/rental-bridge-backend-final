@@ -4,6 +4,9 @@ import { properties } from "../db/schema/app.js";
 import { eq } from "drizzle-orm";
 import { authenticate } from "../middlewares/authenticate.js";
 import { verifyOwnership } from "../middlewares/verifyOwnership.js";
+import google from "googlethis";
+
+const photoCache = new Map<number, string[]>();
 
 const router = Router();
 
@@ -73,6 +76,72 @@ router.get("/:id", async (req: Request, res: Response) => {
     } catch (error) {
         console.error(`GET /properties/${id} error:`, error);
         return res.status(500).json({ error: "Failed to fetch property" });
+    }
+});
+
+// ─────────────────────────────────────────────
+// GET /api/properties/:id/photos — Fetch photos by property name via Google Images
+// Only fetches for flat/apartment types.
+// Frontend sends name, city, propertyType as query params to avoid an extra DB round-trip.
+// ─────────────────────────────────────────────
+router.get("/:id/photos", async (req: Request, res: Response) => {
+    const id = parseId(req.params.id);
+    if (!id) {
+        return res.status(400).json({ error: "Invalid property ID" });
+    }
+
+    // Only flat/apartment should have photos fetched
+    const propertyType = (req.query.propertyType as string || "").toLowerCase();
+    if (propertyType !== "flat" && propertyType !== "apartment") {
+        return res.status(200).json([]);
+    }
+
+    if (photoCache.has(id)) {
+        return res.status(200).json(photoCache.get(id));
+    }
+
+    try {
+        // Use name and city from query params if provided (fast path — no DB lookup needed)
+        // Fall back to DB lookup if not provided
+        let name = (req.query.name as string || "").trim();
+        let city = (req.query.city as string || "").trim();
+
+        if (!name) {
+            const property = await db
+                .select()
+                .from(properties)
+                .where(eq(properties.id, id));
+
+            if (!property.length) {
+                return res.status(404).json({ error: "Property not found" });
+            }
+
+            name = property[0].title || "";
+            city = property[0].city || "";
+        }
+
+        const searchQuery = `${name} ${city} apartment`.trim();
+        if (!name) {
+            return res.status(200).json([]);
+        }
+
+        console.log(`[photos] Searching Google Images for: "${searchQuery}"`);
+        const imagesResult = await google.image(searchQuery, { safe: false });
+
+        // Filter to only URLs that are valid images (not SVGs or data URIs)
+        const imageUrls = imagesResult
+            .map(img => img.url)
+            .filter(url => url && url.startsWith("http") && !url.endsWith(".svg"));
+
+        const finalImages = imageUrls.slice(0, 4);
+
+        // Cache so re-visiting the same property is instant
+        photoCache.set(id, finalImages);
+        return res.status(200).json(finalImages);
+
+    } catch (error) {
+        console.error(`GET /properties/${id}/photos error:`, error);
+        return res.status(500).json({ error: "Failed to fetch property photos" });
     }
 });
 
