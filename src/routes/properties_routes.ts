@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { db } from "../db/index.js";
 import { properties, propertyListings } from "../db/schema/app.js";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, and, or, gte, lte, inArray, ilike, desc, asc } from "drizzle-orm";
 import { authenticate } from "../middlewares/authenticate.js";
 import { verifyOwnership } from "../middlewares/verifyOwnership.js";
 import google from "googlethis";
@@ -65,22 +65,118 @@ router.get("/featured", async (req: Request, res: Response) => {
         const limit = parseInt(req.query.limit as string) || 20;
         const offset = (page - 1) * limit;
 
+        const bhk = req.query.bhk as string;
+        const rent_min = req.query.rent_min as string;
+        const rent_max = req.query.rent_max as string;
+        const price_min = req.query.price_min as string;
+        const price_max = req.query.price_max as string;
+        const locality = req.query.locality as string;
+        const purpose = req.query.purpose as string;
+        const sort_by = req.query.sort_by as string;
+        const sort_order = req.query.sort_order as string;
+
+        const conditions = [];
+
+        // BHK filter
+        if (bhk) {
+            const bhkList = bhk.split(",").map(Number).filter(n => !isNaN(n));
+            if (bhkList.length > 0) {
+                if (bhkList.includes(5)) {
+                    conditions.push(or(inArray(properties.bedrooms, bhkList), gte(properties.bedrooms, 5)));
+                } else {
+                    conditions.push(inArray(properties.bedrooms, bhkList));
+                }
+            }
+        }
+
+        // Rent filter
+        if (rent_min) {
+            conditions.push(sql`${properties.monthly_rent} >= ${parseFloat(rent_min)}`);
+        }
+        if (rent_max) {
+            conditions.push(sql`${properties.monthly_rent} <= ${parseFloat(rent_max)}`);
+        }
+
+        // Sale price filter
+        if (price_min) {
+            conditions.push(sql`${propertyListings.price_in_cr} >= ${price_min}`);
+        }
+        if (price_max) {
+            conditions.push(sql`${propertyListings.price_in_cr} <= ${price_max}`);
+        }
+
+        // Locality filter
+        if (locality && locality.trim()) {
+            conditions.push(or(
+                ilike(properties.address, `%${locality.trim()}%`),
+                ilike(propertyListings.locality, `%${locality.trim()}%`)
+            ));
+        }
+
+        // Purpose filter
+        if (purpose) {
+            const purposeList = purpose.split(",").map(p => p.trim()).filter(Boolean) as Array<"rent" | "sale" | "both">;
+            if (purposeList.length > 0) {
+                conditions.push(inArray(propertyListings.listing_purpose, purposeList));
+            }
+        }
+
+        // Order mapping
+        let orderByClause = [asc(properties.id)];
+        if (sort_by) {
+            const isDesc = sort_order?.toLowerCase() === "desc";
+            if (sort_by === "rent") {
+                orderByClause = [isDesc ? desc(properties.monthly_rent) : asc(properties.monthly_rent)];
+            } else if (sort_by === "price") {
+                orderByClause = [isDesc ? desc(propertyListings.price_in_cr) : asc(propertyListings.price_in_cr)];
+            } else if (sort_by === "area") {
+                orderByClause = [isDesc ? desc(properties.area_sqft) : asc(properties.area_sqft)];
+            } else if (sort_by === "bhk") {
+                orderByClause = [isDesc ? desc(properties.bedrooms) : asc(properties.bedrooms)];
+            }
+        }
+
         const [rows, totalRes] = await Promise.all([
-            db.execute(sql`
-                SELECT
-                    p.*,
-                    pl.id AS listing_id
-                FROM properties p
-                LEFT JOIN property_listings pl ON pl.linked_property_id = p.id
-                ORDER BY p.id ASC
-                LIMIT ${limit} OFFSET ${offset}
-            `),
-            db.execute(sql`SELECT COUNT(*) FROM properties`)
+            db
+                .select({
+                    id: properties.id,
+                    title: properties.title,
+                    description: properties.description,
+                    property_type: properties.property_type,
+                    address: properties.address,
+                    city: properties.city,
+                    state: properties.state,
+                    zip_code: properties.zip_code,
+                    latitude: properties.latitude,
+                    longitude: properties.longitude,
+                    bedrooms: properties.bedrooms,
+                    bathrooms: properties.bathrooms,
+                    area_sqft: properties.area_sqft,
+                    monthly_rent: properties.monthly_rent,
+                    security_deposit: properties.security_deposit,
+                    is_furnished: properties.is_furnished,
+                    parking_available: properties.parking_available,
+                    status: properties.status,
+                    available_from: properties.available_from,
+                    listing_id: propertyListings.id,
+                })
+                .from(properties)
+                .leftJoin(propertyListings, eq(propertyListings.linked_property_id, properties.id))
+                .where(and(...conditions))
+                .orderBy(...orderByClause)
+                .limit(limit)
+                .offset(offset),
+
+            db
+                .select({ count: sql<number>`count(*)` })
+                .from(properties)
+                .leftJoin(propertyListings, eq(propertyListings.linked_property_id, properties.id))
+                .where(and(...conditions))
         ]);
 
-        const total = parseInt(totalRes.rows[0].count as string);
+        const total = totalRes[0]?.count ?? 0;
 
-        return res.status(200).json({ data: rows.rows, total });
+        return res.status(200).json({ data: rows, total });
     } catch (error) {
         console.error("GET /properties/featured error:", error);
         return res.status(500).json({ error: "Failed to fetch featured properties" });
