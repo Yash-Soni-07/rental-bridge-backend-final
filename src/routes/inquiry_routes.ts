@@ -42,10 +42,11 @@ router.post("/", async (req, res) => {
         }
 
         const transporter = await getTransporter();
+        const senderEmail = process.env.SMTP_USER || "noreply@rentalbridge.com";
 
         // 1. Email to the Owner/Agent
         const ownerMail = await transporter.sendMail({
-            from: '"Rental Bridge" <noreply@rentalbridge.com>',
+            from: `"Rental Bridge" <${senderEmail}>`,
             to: "yashsoni0701@gmail.com",
             subject: `New Property Inquiry from ${name}`,
             text: `
@@ -67,16 +68,27 @@ Price/Rent: ${property.price}
 
         // 2. Email to the User
         const userMail = await transporter.sendMail({
-            from: '"Rental Bridge" <noreply@rentalbridge.com>',
+            from: `"Rental Bridge" <${senderEmail}>`,
             to: email,
-            subject: "Your inquiry has been registered!",
+            subject: `Inquiry Registered: ${property.name}`,
             text: `
 Hello ${name},
 
-Welcome to Rental Bridge! 
+Thank you for your interest! We have successfully registered your inquiry for the property listed on Rental Bridge.
 
-We have successfully registered your inquiry for:
-${property.name} (${property.location})
+Here are the details of the property and your inquiry:
+
+--- Property Details ---
+Title: ${property.name}
+Type: ${property.type}
+Location: ${property.location}
+Price/Rent: ${property.price}
+
+--- Your Contact Details ---
+Name: ${name}
+Phone: ${phone}
+Email: ${email}
+Message: ${message || "No additional message."}
 
 Our team or the property owner will contact you shortly at ${phone} or via this email address.
 
